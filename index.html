@@ -92,26 +92,26 @@
   <!-- Header: Controls -->
   <div class="header">
     <div class="group">
-      <button id="run" class="primary">Run</button>
-      <button id="pause">Pause</button>
-      <button id="step">Step</button>
-      <button id="reset">Reset Grid</button>
-      <button id="clearWalls">Clear Walls</button>
-      <button id="randomWalls">Random Walls</button>
+      <button id="run" class="primary" title="探索を開始します">Run</button>
+      <button id="pause" title="探索を一時停止します">Pause</button>
+      <button id="step" title="1ステップだけ進めます（デバッグ用）">Step</button>
+      <button id="reset" title="グリッドを初期化して再生成します">Reset Grid</button>
+      <button id="clearWalls" title="すべての壁を削除します">Clear Walls</button>
+      <button id="randomWalls" title="ランダムに壁を生成します">Random Walls</button>
     </div>
     <div class="group">
-      <label>Speed</label>
-      <input id="speed" type="range" min="1" max="120" value="30" />
+      <label title="小さいほどゆっくり・大きいほど速い">Speed</label>
+      <input id="speed" type="range" min="1" max="120" value="30" title="1=ゆっくり / 120=高速" />
     </div>
     <div class="group">
-      <label>Rows</label>
-      <input id="rows" type="range" min="10" max="60" value="25" />
-      <label>Cols</label>
-      <input id="cols" type="range" min="10" max="80" value="40" />
+      <label title="行数（縦のマス数）">Rows</label>
+      <input id="rows" type="range" min="10" max="60" value="25" title="行数（縦のマス数）" />
+      <label title="列数（横のマス数）">Cols</label>
+      <input id="cols" type="range" min="10" max="80" value="40" title="列数（横のマス数）" />
     </div>
     <div class="group">
-      <label>Mode</label>
-      <select id="mode">
+      <label title="操作モードの切替">Mode</label>
+      <select id="mode" title="壁の描画/消去、Start/Goalの移動を切替">
         <option value="wall">Draw Walls</option>
         <option value="erase">Erase</option>
         <option value="start">Move Start</option>
@@ -119,11 +119,14 @@
       </select>
     </div>
     <div class="group">
-      <label><input id="diagonal" type="checkbox" /> Diagonal</label>
+      <label title="斜め方向の移動を許可"><input id="diagonal" type="checkbox" /> Diagonal</label>
     </div>
     <div class="group">
-      <button id="save">Save</button>
-      <button id="load">Load</button>
+      <button id="save" title="現在の配置をローカルに保存">Save</button>
+      <button id="load" title="保存した配置を読み込み">Load</button>
+    </div>
+    <div class="group" style="margin-left:auto">
+      <button id="helpBtn" title="使い方を表示">Help</button>
     </div>
   </div>
 
@@ -140,6 +143,25 @@
     </div>
     <div class="canvas-wrap">
       <canvas id="canvas" width="960" height="600"></canvas>
+    </div>
+  </div>
+
+  <!-- Help Modal -->
+  <div id="helpModal" class="modal-backdrop" style="display:none">
+    <div class="modal">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <h2 style="margin:0;font-size:18px;">使い方</h2>
+        <button id="helpClose" title="閉じる">×</button>
+      </div>
+      <div style="font-size:14px;color:var(--muted);line-height:1.7;margin-top:8px;">
+        <p><strong>基本</strong>: グリッド上でドラッグして <em>壁</em> を描画します。<br/>Mode を <em>Move Start</em>/<em>Move Goal</em> に切り替えると、開始/終了位置を移動できます。</p>
+        <p><strong>実行</strong>: 壁を配置したら <em>Run</em> で探索開始、<em>Pause</em> で一時停止、<em>Step</em> で1手だけ進めます。<br/>斜め移動は <em>Diagonal</em> でON/OFF。速度は <em>Speed</em> スライダーで調整。</p>
+        <p><strong>サイズ変更</strong>: <em>Rows</em>/<em>Cols</em> を動かすと、行・列サイズを変更してグリッドを再生成します。</p>
+        <p><strong>保存/読込</strong>: <em>Save</em> で現在の状態をブラウザに保存、<em>Load</em> で復元します。</p>
+        <p><strong>色の意味</strong>: 緑=Start / 赤=Goal / 黄=Path / 水色=Open / グレー=Closed / 暗色=Wall。</p>
+        <p><strong>到達不可</strong>: 経路がない場合、上部のステータスに「経路が見つかりませんでした。」と表示されます。</p>
+        <p style="margin:6px 0 0;color:var(--text);">ヒント: まずは壁を少し描いて Run を押してください。</p>
+      </div>
     </div>
   </div>
 
@@ -181,6 +203,9 @@
     const diagonalCheckbox = document.getElementById('diagonal');
     const saveBtn = document.getElementById('save');
     const loadBtn = document.getElementById('load');
+    const helpBtn = document.getElementById('helpBtn');
+    const helpModal = document.getElementById('helpModal');
+    const helpClose = document.getElementById('helpClose');
 
     const STORAGE_KEY = 'astar-visualizer-v1';
 
@@ -537,14 +562,26 @@
     saveBtn.addEventListener('click', saveToLocalStorage);
     loadBtn.addEventListener('click', loadFromLocalStorage);
 
+    // Help modal events
+    function openHelp() { helpModal.style.display = 'flex'; }
+    function closeHelp() { helpModal.style.display = 'none'; localStorage.setItem('astar-help-seen','1'); }
+    helpBtn.addEventListener('click', openHelp);
+    helpClose.addEventListener('click', closeHelp);
+    helpModal.addEventListener('click', (e) => { if (e.target === helpModal) closeHelp(); });
+
     // Resize observer to keep canvas crisp
     const ro = new ResizeObserver(() => draw());
     ro.observe(canvas);
 
     // Initialize
     initGrid();
-    setStatus('Ready. 壁を描いて Run で探索。');
+    const seen = localStorage.getItem('astar-help-seen');
+    if (!seen) {
+      openHelp();
+      setStatus('ようこそ！まずは「Help」を確認してください。');
+    } else {
+      setStatus('ヒント: ドラッグで壁、ModeでStart/Goal移動。Runで探索。');
+    }
   </script>
 </body>
 </html>
-
