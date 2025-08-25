@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>A* Pathfinding Visualizer (Single File)</title>
+  <style>
+    /* --- Basic Layout --- */
+    :root {
+      --bg: #0f1220;
+      --panel: #181c2f;
+      --panel-2: #1f2540;
+      --text: #e6e8f2;
+      --muted: #aab0c1;
+      --accent: #6ea8fe;
+      --good: #4caf50;
+      --bad: #ef5350;
+      --warn: #ffd54f;
+      --grid: #2a3050;
+      --open: #80d8ff;
+      --closed: #607d8b;
+      --path: #ffd54f;
+      --wall: #111318;
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    }
+
+    .header {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 10px 14px;
+      background: linear-gradient(0deg, var(--panel), var(--panel-2));
+      border-bottom: 1px solid #252b4a;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .group { display: flex; gap: 8px; align-items: center; }
+    .group label { color: var(--muted); font-size: 12px; }
+    .group input[type="range"] { width: 140px; }
+
+    button, select {
+      background: #232948;
+      color: var(--text);
+      border: 1px solid #2f365b;
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    button:hover { border-color: #43508b; }
+    button.primary { background: var(--accent); color: #0b1026; border-color: transparent; }
+    button.danger { background: #ef5350; color: #fff; border-color: transparent; }
+
+    .container {
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .canvas-wrap {
+      display: grid;
+      place-items: center;
+    }
+
+    canvas { 
+      background: #0d1020; 
+      border: 1px solid #242a49; 
+      border-radius: 8px;
+      image-rendering: pixelated;
+      max-width: 100%;
+      height: auto;
+    }
+
+    .legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+    .dot { width: 12px; height: 12px; display: inline-block; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+    .msg { color: var(--muted); min-height: 1.4em; }
+    .msg.error { color: var(--bad); }
+    .msg.success { color: var(--good); }
+  </style>
+</head>
+<body>
+  <!-- Header: Controls -->
+  <div class="header">
+    <div class="group">
+      <button id="run" class="primary">Run</button>
+      <button id="pause">Pause</button>
+      <button id="step">Step</button>
+      <button id="reset">Reset Grid</button>
+      <button id="clearWalls">Clear Walls</button>
+      <button id="randomWalls">Random Walls</button>
+    </div>
+    <div class="group">
+      <label>Speed</label>
+      <input id="speed" type="range" min="1" max="120" value="30" />
+    </div>
+    <div class="group">
+      <label>Rows</label>
+      <input id="rows" type="range" min="10" max="60" value="25" />
+      <label>Cols</label>
+      <input id="cols" type="range" min="10" max="80" value="40" />
+    </div>
+    <div class="group">
+      <label>Mode</label>
+      <select id="mode">
+        <option value="wall">Draw Walls</option>
+        <option value="erase">Erase</option>
+        <option value="start">Move Start</option>
+        <option value="goal">Move Goal</option>
+      </select>
+    </div>
+    <div class="group">
+      <label><input id="diagonal" type="checkbox" /> Diagonal</label>
+    </div>
+    <div class="group">
+      <button id="save">Save</button>
+      <button id="load">Load</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="legend">
+      <span><span class="dot" style="background: var(--grid)"></span>Grid</span>
+      <span><span class="dot" style="background: var(--wall)"></span>Wall</span>
+      <span><span class="dot" style="background: var(--open)"></span>Open</span>
+      <span><span class="dot" style="background: var(--closed)"></span>Closed</span>
+      <span><span class="dot" style="background: var(--path)"></span>Path</span>
+      <span><span class="dot" style="background: var(--good)"></span>Start</span>
+      <span><span class="dot" style="background: var(--bad)"></span>Goal</span>
+      <span class="msg" id="status"></span>
+    </div>
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="960" height="600"></canvas>
+    </div>
+  </div>
+
+  <script>
+    // A* Pathfinding Visualizer - Single-file implementation
+    // No external dependencies. Inline HTML/CSS/JS.
+
+    // ----- Data Structures -----
+    /** Node structure for each grid cell */
+    class Node {
+      constructor(r, c) {
+        this.r = r; // row
+        this.c = c; // col
+        this.wall = false; // is obstacle
+        this.g = Infinity; // cost from start
+        this.h = 0;        // heuristic to goal
+        this.f = Infinity; // g + h
+        this.prev = null;  // previous node in path
+        this.inOpen = false;
+        this.inClosed = false;
+      }
+    }
+
+    // ----- Globals -----
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+
+    const runBtn = document.getElementById('run');
+    const pauseBtn = document.getElementById('pause');
+    const stepBtn = document.getElementById('step');
+    const resetBtn = document.getElementById('reset');
+    const clearWallsBtn = document.getElementById('clearWalls');
+    const randomWallsBtn = document.getElementById('randomWalls');
+    const speedInput = document.getElementById('speed');
+    const rowsInput = document.getElementById('rows');
+    const colsInput = document.getElementById('cols');
+    const modeSelect = document.getElementById('mode');
+    const diagonalCheckbox = document.getElementById('diagonal');
+    const saveBtn = document.getElementById('save');
+    const loadBtn = document.getElementById('load');
+
+    const STORAGE_KEY = 'astar-visualizer-v1';
+
+    let rows = parseInt(rowsInput.value, 10);
+    let cols = parseInt(colsInput.value, 10);
+    let grid = [];              // 2D array of Node
+    let startNode = null;       // Node
+    let goalNode = null;        // Node
+    let openSet = [];           // list of Node
+    let running = false;
+    let paused = true;
+    let stepsPerFrame = parseInt(speedInput.value, 10);
+    let dragging = false;
+    let dragMove = false; // when moving start/goal
+    let lastDragCell = null;
+    let path = [];
+
+    // ----- Utilities -----
+    function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+
+    function resetAlgoState() {
+      // Reset node costs and sets
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const n = grid[r][c];
+          n.g = Infinity; n.h = 0; n.f = Infinity; n.prev = null; n.inOpen = false; n.inClosed = false;
+        }
+      }
+      openSet = [];
+      path = [];
+      paused = true;
+      running = false;
+      setStatus('Ready. Click Run to start.');
+    }
+
+    function setStatus(text, type = '') {
+      statusEl.textContent = ' — ' + text;
+      statusEl.className = 'msg ' + type;
+    }
+
+    function deviceScaleCanvas() {
+      // Improve sharpness on HiDPI screens
+      const ratio = window.devicePixelRatio || 1;
+      const cssWidth = canvas.clientWidth || canvas.width;
+      const cssHeight = canvas.clientHeight || canvas.height;
+      canvas.width = Math.floor(cssWidth * ratio);
+      canvas.height = Math.floor(cssHeight * ratio);
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    }
+
+    // ----- Core: Grid Init & Drawing -----
+    function initGrid() {
+      rows = parseInt(rowsInput.value, 10);
+      cols = parseInt(colsInput.value, 10);
+
+      grid = new Array(rows);
+      for (let r = 0; r < rows; r++) {
+        grid[r] = new Array(cols);
+        for (let c = 0; c < cols; c++) grid[r][c] = new Node(r, c);
+      }
+
+      // Default start/goal positions near center
+      startNode = grid[Math.floor(rows / 2)][Math.floor(cols / 4)];
+      goalNode = grid[Math.floor(rows / 2)][Math.floor(cols * 3 / 4)];
+
+      resetAlgoState();
+      draw();
+    }
+
+    function draw() {
+      deviceScaleCanvas();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const cw = canvas.clientWidth || canvas.width;
+      const ch = canvas.clientHeight || canvas.height;
+      const cellW = Math.floor(cw / cols);
+      const cellH = Math.floor(ch / rows);
+      const size = Math.max(5, Math.floor(Math.min(cellW, cellH)));
+
+      // Background
+      ctx.fillStyle = '#0d1020';
+      ctx.fillRect(0, 0, cw, ch);
+
+      // Draw cells
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const n = grid[r][c];
+          const x = c * size; const y = r * size;
+          if (n.wall) {
+            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--wall');
+          } else if (n === startNode) {
+            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--good');
+          } else if (n === goalNode) {
+            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bad');
+          } else if (n.inClosed) {
+            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--closed');
+          } else if (n.inOpen) {
+            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--open');
+          } else {
+            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid');
+          }
+          ctx.fillRect(x, y, size - 1, size - 1);
+        }
+      }
+
+      // Draw current path on top
+      if (path && path.length) {
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--path');
+        for (const n of path) {
+          const x = n.c * size; const y = n.r * size;
+          ctx.fillRect(x, y, size - 1, size - 1);
+        }
+      }
+    }
+
+    // ----- A* Implementation -----
+    function heuristic(a, b) {
+      // Manhattan for 4-dir; Octile for 8-dir
+      const dr = Math.abs(a.r - b.r);
+      const dc = Math.abs(a.c - b.c);
+      if (!diagonalCheckbox.checked) return dr + dc;
+      const F = Math.SQRT2 - 1; // octile coefficient
+      return (dr < dc) ? F * dr + dc : F * dc + dr;
+    }
+
+    function neighbors(node) {
+      const res = [];
+      const d4 = [ [1,0], [-1,0], [0,1], [0,-1] ];
+      const d8 = [ [1,1], [1,-1], [-1,1], [-1,-1] ];
+      for (const [dr, dc] of d4) {
+        const r = node.r + dr, c = node.c + dc;
+        if (r>=0 && r<rows && c>=0 && c<cols) res.push(grid[r][c]);
+      }
+      if (diagonalCheckbox.checked) {
+        for (const [dr, dc] of d8) {
+          const r = node.r + dr, c = node.c + dc;
+          if (r>=0 && r<rows && c>=0 && c<cols) res.push(grid[r][c]);
+        }
+      }
+      return res;
+    }
+
+    function reconstructPath(endNode) {
+      const p = [];
+      let cur = endNode;
+      while (cur) { p.push(cur); cur = cur.prev; }
+      p.reverse();
+      return p;
+    }
+
+    function prepareAStar() {
+      // Initialize for a new run
+      resetAlgoState();
+      startNode.g = 0;
+      startNode.h = heuristic(startNode, goalNode);
+      startNode.f = startNode.h;
+      openSet.push(startNode);
+      startNode.inOpen = true;
+    }
+
+    function stepAStar() {
+      if (openSet.length === 0) {
+        // No path
+        running = false;
+        paused = true;
+        setStatus('経路が見つかりませんでした。', 'error');
+        return 'done';
+      }
+
+      // Pick node with the lowest f
+      let bestIdx = 0; let bestF = openSet[0].f;
+      for (let i = 1; i < openSet.length; i++) {
+        const n = openSet[i];
+        if (n.f < bestF || (n.f === bestF && n.g > openSet[bestIdx].g)) { bestF = n.f; bestIdx = i; }
+      }
+      const current = openSet.splice(bestIdx, 1)[0];
+      current.inOpen = false;
+      current.inClosed = true;
+
+      if (current === goalNode) {
+        path = reconstructPath(current);
+        running = false;
+        paused = true;
+        setStatus(`経路長: ${path.length}（到達）`, 'success');
+        return 'done';
+      }
+
+      // Explore neighbors
+      for (const nb of neighbors(current)) {
+        if (nb.wall || nb.inClosed) continue;
+        const cost = (nb.r !== current.r && nb.c !== current.c) ? Math.SQRT2 : 1;
+        const tentativeG = current.g + cost;
+        if (tentativeG < nb.g) {
+          nb.prev = current;
+          nb.g = tentativeG;
+          nb.h = heuristic(nb, goalNode);
+          nb.f = nb.g + nb.h;
+          if (!nb.inOpen) { openSet.push(nb); nb.inOpen = true; }
+        }
+      }
+
+      // Update preview path for nicer visualization
+      // Choose the open node with the lowest f as a provisional target
+      if (openSet.length) {
+        let previewIdx = 0; let minF = openSet[0].f;
+        for (let i = 1; i < openSet.length; i++) {
+          if (openSet[i].f < minF) { previewIdx = i; minF = openSet[i].f; }
+        }
+        path = reconstructPath(openSet[previewIdx]);
+      }
+
+      return 'continue';
+    }
+
+    function runAStar() {
+      if (!startNode || !goalNode) return;
+      if (!running) { prepareAStar(); running = true; }
+      paused = false;
+      setStatus('探索中…');
+
+      const loop = () => {
+        if (paused) return; // stop the loop
+        let count = clamp(parseInt(speedInput.value, 10), 1, 240);
+        while (count-- > 0 && !paused) {
+          const res = stepAStar();
+          if (res === 'done') break;
+        }
+        draw();
+        if (!paused) requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+    }
+
+    // ----- Persistence -----
+    function saveToLocalStorage() {
+      const data = {
+        rows, cols,
+        diagonal: diagonalCheckbox.checked,
+        start: { r: startNode.r, c: startNode.c },
+        goal: { r: goalNode.r, c: goalNode.c },
+        walls: [],
+      };
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) if (grid[r][c].wall) data.walls.push([r, c]);
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      setStatus('保存しました。');
+    }
+
+    function loadFromLocalStorage() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) { setStatus('保存データがありません。'); return; }
+      try {
+        const data = JSON.parse(raw);
+        rowsInput.value = data.rows; colsInput.value = data.cols;
+        diagonalCheckbox.checked = !!data.diagonal;
+        initGrid();
+        // Restore walls
+        if (Array.isArray(data.walls)) {
+          for (const [r, c] of data.walls) {
+            if (r>=0 && r<rows && c>=0 && c<cols) grid[r][c].wall = true;
+          }
+        }
+        // Restore start/goal
+        if (data.start) startNode = grid[clamp(data.start.r,0,rows-1)][clamp(data.start.c,0,cols-1)];
+        if (data.goal)  goalNode  = grid[clamp(data.goal.r,0,rows-1)][clamp(data.goal.c,0,cols-1)];
+        resetAlgoState();
+        draw();
+        setStatus('読み込みました。');
+      } catch (e) {
+        console.error(e); setStatus('読み込みに失敗しました。', 'error');
+      }
+    }
+
+    // ----- Interaction -----
+    function canvasToCell(x, y) {
+      const rect = canvas.getBoundingClientRect();
+      const cx = x - rect.left; const cy = y - rect.top;
+      const cellW = Math.floor((canvas.clientWidth || canvas.width) / cols);
+      const cellH = Math.floor((canvas.clientHeight || canvas.height) / rows);
+      const size = Math.max(5, Math.floor(Math.min(cellW, cellH)));
+      const c = clamp(Math.floor(cx / size), 0, cols - 1);
+      const r = clamp(Math.floor(cy / size), 0, rows - 1);
+      return grid[r][c];
+    }
+
+    function handleDrawAt(node) {
+      if (!node || node === startNode || node === goalNode) return;
+      const mode = modeSelect.value;
+      if (mode === 'wall') node.wall = true;
+      else if (mode === 'erase') node.wall = false;
+    }
+
+    function handleMoveSpecial(node) {
+      if (!node) return;
+      const mode = modeSelect.value;
+      if (mode === 'start' && node !== goalNode && !node.wall) startNode = node;
+      if (mode === 'goal'  && node !== startNode && !node.wall) goalNode = node;
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+      dragging = true; lastDragCell = null; dragMove = false;
+      const cell = canvasToCell(e.clientX, e.clientY);
+      if (modeSelect.value === 'start' || modeSelect.value === 'goal') { dragMove = true; handleMoveSpecial(cell); }
+      else handleDrawAt(cell);
+      resetAlgoState(); // any edit cancels current run
+      draw();
+      e.preventDefault();
+    });
+    canvas.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const cell = canvasToCell(e.clientX, e.clientY);
+      if (cell === lastDragCell) return;
+      lastDragCell = cell;
+      if (dragMove) handleMoveSpecial(cell);
+      else handleDrawAt(cell);
+      resetAlgoState();
+      draw();
+    });
+    window.addEventListener('mouseup', () => { dragging = false; dragMove = false; lastDragCell = null; });
+
+    // Controls
+    runBtn.addEventListener('click', runAStar);
+    pauseBtn.addEventListener('click', () => { paused = true; setStatus('一時停止'); });
+    stepBtn.addEventListener('click', () => {
+      if (!running) prepareAStar();
+      paused = true;
+      const res = stepAStar();
+      draw();
+      if (res === 'done') paused = true;
+    });
+    resetBtn.addEventListener('click', () => { initGrid(); setStatus('グリッドをリセットしました。'); });
+    clearWallsBtn.addEventListener('click', () => {
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) grid[r][c].wall = false; 
+      resetAlgoState(); draw(); setStatus('壁をクリアしました。');
+    });
+    randomWallsBtn.addEventListener('click', () => {
+      const density = 0.22; // simple random density
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const n = grid[r][c];
+          if (n === startNode || n === goalNode) { n.wall = false; continue; }
+          n.wall = Math.random() < density;
+        }
+      }
+      resetAlgoState(); draw(); setStatus('ランダムに壁を生成しました。');
+    });
+
+    rowsInput.addEventListener('input', () => { initGrid(); setStatus('行数変更: ' + rowsInput.value); });
+    colsInput.addEventListener('input', () => { initGrid(); setStatus('列数変更: ' + colsInput.value); });
+    diagonalCheckbox.addEventListener('change', () => { resetAlgoState(); draw(); setStatus(diagonalCheckbox.checked ? '斜め移動: ON' : '斜め移動: OFF'); });
+    speedInput.addEventListener('input', () => { stepsPerFrame = parseInt(speedInput.value, 10); });
+
+    saveBtn.addEventListener('click', saveToLocalStorage);
+    loadBtn.addEventListener('click', loadFromLocalStorage);
+
+    // Resize observer to keep canvas crisp
+    const ro = new ResizeObserver(() => draw());
+    ro.observe(canvas);
+
+    // Initialize
+    initGrid();
+    setStatus('Ready. 壁を描いて Run で探索。');
+  </script>
+</body>
+</html>
+
