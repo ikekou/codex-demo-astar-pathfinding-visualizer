@@ -233,7 +233,7 @@
     let grid = [];              // 2D array of Node
     let startNode = null;       // Node
     let goalNode = null;        // Node
-    let openSet = [];           // list of Node
+    let openHeap = null;        // Min-heap for open set
     let running = false;
     let paused = true;
     let stepsPerFrame = parseInt(speedInput.value, 10);
@@ -253,7 +253,8 @@
           n.g = Infinity; n.h = 0; n.f = Infinity; n.prev = null; n.inOpen = false; n.inClosed = false;
         }
       }
-      openSet = [];
+      if (!openHeap) openHeap = new MinHeap((a, b) => a.f - b.f);
+      openHeap.clear();
       path = [];
       paused = true;
       running = false;
@@ -298,11 +299,11 @@
       goalNode = grid[Math.floor(rows / 2)][Math.floor(cols * 3 / 4)];
 
       resetAlgoState();
+      layoutCanvas();
       draw();
     }
 
     function draw() {
-      layoutCanvas();
       deviceScaleCanvas();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -316,23 +317,33 @@
       ctx.fillStyle = '#0d1020';
       ctx.fillRect(0, 0, cw, ch);
 
+      // Cache CSS colors once per draw
+      const css = getComputedStyle(document.documentElement);
+      const colWall   = css.getPropertyValue('--wall');
+      const colGood   = css.getPropertyValue('--good');
+      const colBad    = css.getPropertyValue('--bad');
+      const colClosed = css.getPropertyValue('--closed');
+      const colOpen   = css.getPropertyValue('--open');
+      const colGrid   = css.getPropertyValue('--grid');
+      const colPath   = css.getPropertyValue('--path');
+
       // Draw cells
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const n = grid[r][c];
           const x = c * size; const y = r * size;
           if (n.wall) {
-            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--wall');
+            ctx.fillStyle = colWall;
           } else if (n === startNode) {
-            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--good');
+            ctx.fillStyle = colGood;
           } else if (n === goalNode) {
-            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bad');
+            ctx.fillStyle = colBad;
           } else if (n.inClosed) {
-            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--closed');
+            ctx.fillStyle = colClosed;
           } else if (n.inOpen) {
-            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--open');
+            ctx.fillStyle = colOpen;
           } else {
-            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid');
+            ctx.fillStyle = colGrid;
           }
           ctx.fillRect(x, y, size - 1, size - 1);
         }
@@ -340,7 +351,7 @@
 
       // Draw current path on top
       if (path && path.length) {
-        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--path');
+        ctx.fillStyle = colPath;
         for (const n of path) {
           const x = n.c * size; const y = n.r * size;
           ctx.fillRect(x, y, size - 1, size - 1);
@@ -389,12 +400,12 @@
       startNode.g = 0;
       startNode.h = heuristic(startNode, goalNode);
       startNode.f = startNode.h;
-      openSet.push(startNode);
+      openHeap.push(startNode);
       startNode.inOpen = true;
     }
 
     function stepAStar() {
-      if (openSet.length === 0) {
+      if (openHeap.size() === 0) {
         // No path
         running = false;
         paused = true;
@@ -402,13 +413,8 @@
         return 'done';
       }
 
-      // Pick node with the lowest f
-      let bestIdx = 0; let bestF = openSet[0].f;
-      for (let i = 1; i < openSet.length; i++) {
-        const n = openSet[i];
-        if (n.f < bestF || (n.f === bestF && n.g > openSet[bestIdx].g)) { bestF = n.f; bestIdx = i; }
-      }
-      const current = openSet.splice(bestIdx, 1)[0];
+      // Pop node with the lowest f
+      const current = openHeap.pop();
       current.inOpen = false;
       current.inClosed = true;
 
@@ -430,19 +436,14 @@
           nb.g = tentativeG;
           nb.h = heuristic(nb, goalNode);
           nb.f = nb.g + nb.h;
-          if (!nb.inOpen) { openSet.push(nb); nb.inOpen = true; }
-        }
+          if (!nb.inOpen) { openHeap.push(nb); nb.inOpen = true; }
+          else { openHeap.update(nb); }
+      }
       }
 
       // Update preview path for nicer visualization
-      // Choose the open node with the lowest f as a provisional target
-      if (openSet.length) {
-        let previewIdx = 0; let minF = openSet[0].f;
-        for (let i = 1; i < openSet.length; i++) {
-          if (openSet[i].f < minF) { previewIdx = i; minF = openSet[i].f; }
-        }
-        path = reconstructPath(openSet[previewIdx]);
-      }
+      const peek = openHeap.peek();
+      if (peek) path = reconstructPath(peek);
 
       return 'continue';
     }
@@ -456,15 +457,74 @@
       const loop = () => {
         if (paused) return; // stop the loop
         let count = clamp(parseInt(speedInput.value, 10), 1, 240);
+        const frameStart = performance.now();
         while (count-- > 0 && !paused) {
           const res = stepAStar();
           if (res === 'done') break;
+          // Keep frame under ~12ms to remain smooth (~60fps)
+          if (performance.now() - frameStart > 12) break;
         }
         draw();
         if (!paused) requestAnimationFrame(loop);
       };
       requestAnimationFrame(loop);
     }
+
+    // ----- MinHeap Implementation (binary heap) -----
+    function MinHeap(compare) {
+      this.arr = [];
+      this.compare = compare || ((a, b) => a - b);
+    }
+    MinHeap.prototype.size = function() { return this.arr.length; };
+    MinHeap.prototype.clear = function() {
+      for (const x of this.arr) if (x) x.heapIndex = -1;
+      this.arr.length = 0;
+    };
+    MinHeap.prototype.peek = function() { return this.arr[0] || null; };
+    MinHeap.prototype.push = function(item) {
+      item.heapIndex = this.arr.length;
+      this.arr.push(item);
+      this._siftUp(item.heapIndex);
+    };
+    MinHeap.prototype.pop = function() {
+      const n = this.arr.length; if (!n) return null;
+      const top = this.arr[0];
+      const last = this.arr.pop();
+      if (n > 1 && last) {
+        this.arr[0] = last; last.heapIndex = 0; this._siftDown(0);
+      }
+      if (top) top.heapIndex = -1;
+      return top || null;
+    };
+    MinHeap.prototype.update = function(item) {
+      const i = item.heapIndex;
+      if (i == null || i < 0 || i >= this.arr.length) return;
+      if (!this._siftUp(i)) this._siftDown(i);
+    };
+    MinHeap.prototype._siftUp = function(i) {
+      const a = this.arr; const cmp = this.compare; let moved = false;
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (cmp(a[i], a[p]) < 0) { this._swap(i, p); i = p; moved = true; }
+        else break;
+      }
+      return moved;
+    };
+    MinHeap.prototype._siftDown = function(i) {
+      const a = this.arr; const cmp = this.compare; const n = a.length;
+      while (true) {
+        const l = i * 2 + 1, r = l + 1; let m = i;
+        if (l < n && cmp(a[l], a[m]) < 0) m = l;
+        if (r < n && cmp(a[r], a[m]) < 0) m = r;
+        if (m !== i) { this._swap(i, m); i = m; } else break;
+      }
+    };
+    MinHeap.prototype._swap = function(i, j) {
+      const a = this.arr;
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+      if (a[i]) a[i].heapIndex = i;
+      if (a[j]) a[j].heapIndex = j;
+    };
 
     // ----- Persistence -----
     function saveToLocalStorage() {
@@ -608,6 +668,7 @@
     function updateFullscreenBtn() {
       const fs = !!document.fullscreenElement || !!document.webkitFullscreenElement;
       fullscreenBtn.textContent = fs ? 'Exit Fullscreen' : 'Fullscreen';
+      layoutCanvas();
       draw();
     }
     fullscreenBtn.addEventListener('click', async () => {
@@ -618,7 +679,7 @@
     document.addEventListener('webkitfullscreenchange', updateFullscreenBtn);
 
     // Resize observer to keep canvas crisp
-    const ro = new ResizeObserver(() => draw());
+    const ro = new ResizeObserver(() => { layoutCanvas(); draw(); });
     ro.observe(document.querySelector('.canvas-wrap'));
     window.addEventListener('resize', draw);
 
