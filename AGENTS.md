@@ -59,6 +59,13 @@ feat(api): ユーザー一覧にページネーションを追加
 関連: Closes #123
 ```
 
+## Branch 運用ルール
+- `main`: 常にリリース可能。直接コミット禁止、PR経由のみ。タグは `vMAJOR.MINOR.PATCH`。
+- 作業ブランチ: `feature/<slug>` / `fix/<issue-id>-<slug>` / `hotfix/<slug>`。小さく短命（~1週間以内）を推奨。
+- 更新方法: 定期的に `git fetch origin && git rebase origin/main` で最新化。
+- マージ方針: 原則 Squash Merge。PRタイトルを規約準拠のサブジェクトにし、squash後のコミットメッセージに採用。
+- リリース/ホットフィックス: 重要修正は `hotfix/*` を `main` にPR → パッチタグ付与。
+
 ## Security & Configuration
 - Never commit secrets. Use `.env.example` and local overrides (`.env.local`).
 - Validate inputs and handle errors explicitly; log without sensitive data.
